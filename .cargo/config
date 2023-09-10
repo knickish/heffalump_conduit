@@ -1,0 +1,6 @@
+[build]
+target = "i686-pc-windows-msvc"
+
+[env]
+HEFFALUMP_MASTADON_INST = "test.io"
+HEFFALUMP_ACCESS_TOKEN = "testing"

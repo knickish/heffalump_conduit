@@ -1,0 +1,22 @@
+[package]
+name = "heffalump_conduit"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+byteorder = "1.4.3"
+hotsync_conduit_rs = { git = "https://github.com/knickish/hotsync_conduit_rs", version = "0.1.0" }
+megalodon = "0.10.0"
+palmrs = { git = "https://github.com/knickish/palmrs", branch = "dogfooding_tweaks" }
+pollster = "0.3.0"
+scraper = "0.17.1"
+tokio = { version = "1.32.0", features = ["tokio-macros"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+path = "src/install.rs"
+name = "heffalump_conduit_install"
