@@ -9,8 +9,8 @@ mod download;
 mod heffalump_hh_types;
 
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
-const AUTHOR_DB: &[u8] = include_bytes!("..\\include\\HeffalumpAuthorDB.pdb");
-const CONTENT_DB: &[u8] = include_bytes!("..\\include\\HeffalumpContentDB.pdb");
+const AUTHOR_DB: &[u8] = include_bytes!("../include/HeffalumpAuthorDB.pdb");
+const CONTENT_DB: &[u8] = include_bytes!("../include/HeffalumpContentDB.pdb");
 const MASTADON_INST: &'static str = env!("HEFFALUMP_MASTADON_INST");
 const MASTADON_ACCESS: &'static str = env!("HEFFALUMP_ACCESS_TOKEN");
 
