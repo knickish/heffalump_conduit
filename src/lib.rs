@@ -1,6 +1,6 @@
 use std::{
     ffi::{c_long, c_uchar, c_void, CString},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use hotsync_conduit_rs::{CSyncProperties, ConduitBuilder, ConduitDBSource};
@@ -20,26 +20,32 @@ use upload::*;
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
 const AUTHOR_DB: &[u8] = include_bytes!("../include/HeffalumpAuthorDB.pdb");
 const CONTENT_DB: &[u8] = include_bytes!("../include/HeffalumpContentDB.pdb");
-const MASTODON_INST: &'static str = env!("HEFFALUMP_MASTADON_INST");
-const MASTODON_ACCESS: &'static str = env!("HEFFALUMP_ACCESS_TOKEN");
-const MASTODON_CACHE_OLD: &'static str = "heffalump_mastodon_timeline_old.json";
-const MASTODON_CACHE_NEW: &'static str = "heffalump_mastodon_timeline.json";
+const MASTODON_INST: &str = env!("HEFFALUMP_MASTADON_INST");
+const MASTODON_ACCESS: &str = env!("HEFFALUMP_ACCESS_TOKEN");
+const MASTODON_CACHE_OLD: &str = "heffalump_mastodon_timeline_old.json";
+const MASTODON_CACHE_NEW: &str = "heffalump_mastodon_timeline.json";
 
 #[no_mangle]
-pub extern "cdecl" fn OpenConduit(_: *const c_void, sync_props: *const CSyncProperties) -> c_long {
+/// # Safety
+///
+/// these pointers are initialized by HS Manager, and this function should only ever be called by it
+pub unsafe extern "cdecl" fn OpenConduit(
+    _: *const c_void,
+    sync_props: *const CSyncProperties,
+) -> c_long {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     let client = get_client(MASTODON_INST.to_owned(), MASTODON_ACCESS.to_owned());
 
-    // SAFETY this is initialized by HS Manager
-    // this is the only way to retrieve the path for the application's
-    // HotSync-created directory
-    let path = unsafe { sync_props.as_ref().unwrap().get_dir_path().unwrap() };
+    let Some(path) = (unsafe { path_from_sync_props(sync_props) }) else {
+        return -1;
+    };
     initialize_logger(&path);
 
-    let Ok((author_db, content_db)) = runtime.block_on(create_dbs(&client, Some(&path))) else {
+    let Ok((author_db, content_db)) = runtime.block_on(create_dbs(client.as_ref(), Some(&path)))
+    else {
         return -1;
     };
 
@@ -66,7 +72,9 @@ pub extern "cdecl" fn OpenConduit(_: *const c_void, sync_props: *const CSyncProp
                     let source =
                         serde_json::from_reader(&source_file).expect("Cannot deserialize cache");
                     trace!("deserialized cache");
-                    if let Err(e) = runtime.block_on(execute_writes(&client, parsed, source)) {
+                    if let Err(e) =
+                        runtime.block_on(execute_writes(client.as_ref(), parsed, source))
+                    {
                         error!("Failed to write with result: {}", e);
                         return Err(Box::new(e));
                     }
@@ -92,9 +100,20 @@ pub extern "cdecl" fn OpenConduit(_: *const c_void, sync_props: *const CSyncProp
     }
 }
 
-fn to_ascii(arg: String) -> Vec<u8> {
+unsafe fn path_from_sync_props(props: *const CSyncProperties) -> Option<PathBuf> {
+    // SAFETY this is initialized by HS Manager
+    // this is the only way to retrieve the path for the application's
+    // HotSync-created directory
+    match unsafe { props.as_ref() } {
+        Some(sync_props) => sync_props.get_dir_path(),
+        None => None,
+    }
+}
+
+fn to_ascii_c(arg: String) -> Vec<u8> {
     arg.chars()
-        .filter(|c| char::is_ascii(&c))
+        .filter(char::is_ascii)
+        .chain(std::iter::once::<char>('\0'))
         .collect::<String>()
         .into_bytes()
 }
@@ -113,24 +132,24 @@ fn initialize_logger(at: &Path) {
 }
 
 async fn create_dbs(
-    client: &Box<dyn Megalodon + Send + Sync>,
+    client: &(dyn Megalodon + Send + Sync),
     write_to_path: Option<&Path>,
 ) -> Result<(PalmDatabase<PdbDatabase>, PalmDatabase<PdbDatabase>), ()> {
     let mut base_author =
-        PalmDatabase::<PdbDatabase>::from_bytes(&AUTHOR_DB).map_err(|e| error!("{}", e))?;
+        PalmDatabase::<PdbDatabase>::from_bytes(AUTHOR_DB).map_err(|e| error!("{}", e))?;
     let mut base_content =
-        PalmDatabase::<PdbDatabase>::from_bytes(&CONTENT_DB).map_err(|e| error!("{}", e))?;
-    let (contents, raw) = feed(&client, 1000).await.map_err(|e| error!("{}", e))?;
+        PalmDatabase::<PdbDatabase>::from_bytes(CONTENT_DB).map_err(|e| error!("{}", e))?;
+    let (contents, raw) = feed(client, 1000).await.map_err(|e| error!("{}", e))?;
     for (idx, (author, content)) in contents.into_iter().enumerate() {
         let author = TootAuthor {
-            author_name: to_ascii(author),
+            author_name: to_ascii_c(author),
         }
         .to_hh_bytes()
         .map_err(|e| error!("{}", e))?;
         let content = TootContent {
             author: idx as u16,
             is_reply_to: 0,
-            contents: to_ascii(content),
+            contents: to_ascii_c(content),
         }
         .to_hh_bytes()
         .map_err(|e| error!("{}", e))?;
@@ -140,7 +159,7 @@ async fn create_dbs(
     if let Some(path) = write_to_path {
         let mut owned = path.clone().to_owned();
         owned.push(MASTODON_CACHE_NEW);
-        if let Ok(_) = std::fs::metadata(&owned) {
+        if std::fs::metadata(&owned).is_ok() {
             // a previous version exists, move it to a different path
             // (overwrites the previous _old file)
             let mut prev = path.to_owned();
@@ -164,7 +183,7 @@ mod test {
     async fn test_create() {
         let mut path = std::env::temp_dir();
         let client = get_client(MASTODON_INST.to_owned(), MASTODON_ACCESS.to_owned());
-        let (auth, cont) = create_dbs(&client, Some(&path)).await.unwrap();
+        let (auth, cont) = create_dbs(client.as_ref(), Some(&path)).await.unwrap();
         dbg!(auth.to_bytes().unwrap().len());
         dbg!(cont.to_bytes().unwrap().len());
         path.push(MASTODON_CACHE_NEW);
