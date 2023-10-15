@@ -103,7 +103,7 @@ fn initialize_logger(at: &Path) {
     let mut log_path = at.to_owned();
     log_path.push("heffalump.log");
     CombinedLogger::init(vec![WriteLogger::new(
-        LevelFilter::Debug,
+        LevelFilter::Info,
         Config::default(),
         std::fs::File::create(log_path).unwrap(),
     )])
