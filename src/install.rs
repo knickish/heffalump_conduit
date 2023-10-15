@@ -18,7 +18,8 @@ fn main() {
         CString::new("heffalump_conduit.dll").unwrap(),
     )
     .unwrap()
-    .with_title(CString::new("Heffalump").unwrap());
+    .with_title(CString::new("Heffalump").unwrap())
+    .with_directory(CString::new("Heffalump").unwrap());
 
     ConduitManager::initialize()
         .unwrap()
