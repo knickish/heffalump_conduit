@@ -32,6 +32,7 @@
 // }
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use log::debug;
 use std::io::{Cursor, Read, Write};
 
 pub trait Record: Sized {
@@ -62,7 +63,7 @@ pub(crate) enum TootWrite {
 }
 
 impl TootWrite {
-    fn c_enum_val(&self) -> u8 {
+    fn c_enum_val(&self) -> u16 {
         match self {
             TootWrite::Favorite(_) => 0,
             TootWrite::Follow(_) => 1,
@@ -87,7 +88,13 @@ impl Record for TootContent {
         let mut cursor = Cursor::new(bytes);
         let author = cursor.read_u16::<BigEndian>()?;
         let is_reply_to = cursor.read_u16::<BigEndian>()?;
-        let mut content_buf = vec![0_u8; cursor.read_u16::<BigEndian>()? as usize];
+        let content_len = cursor.read_u16::<BigEndian>()? as usize;
+
+        if content_len == 0 {
+            debug!("Size of content is: {} bytes", content_len);
+            debug!("content is: \n{:?} ", bytes);
+        }
+        let mut content_buf = vec![0_u8; content_len];
         cursor.read_exact(&mut content_buf)?;
         Ok(Self {
             author,
@@ -119,7 +126,7 @@ impl Record for TootAuthor {
 impl Record for TootWrite {
     fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
-        cursor.write_u8(self.c_enum_val())?;
+        cursor.write_u16::<BigEndian>(self.c_enum_val())?;
         match self {
             TootWrite::Favorite(val) => cursor.write_u16::<BigEndian>(*val)?,
             TootWrite::Follow(val) => cursor.write_u16::<BigEndian>(*val)?,
@@ -137,7 +144,9 @@ impl Record for TootWrite {
             0 => Ok(Self::Favorite(cursor.read_u16::<BigEndian>()?)),
             1 => Ok(Self::Follow(cursor.read_u16::<BigEndian>()?)),
             2 => Ok(Self::Reblog(cursor.read_u16::<BigEndian>()?)),
-            3 => Ok(Self::Toot(TootContent::from_hh_bytes(cursor.get_ref())?)),
+            3 => Ok(Self::Toot(TootContent::from_hh_bytes(
+                cursor.get_ref()[(cursor.position() as usize)..].as_ref(),
+            )?)),
             _ => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid discriminant",

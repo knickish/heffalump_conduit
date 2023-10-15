@@ -48,7 +48,10 @@ pub extern "cdecl" fn OpenConduit(_: *const c_void, sync_props: *const CSyncProp
             .download_db_and(
                 CString::new("HeffalumpWritesDB").unwrap(),
                 hotsync_conduit_rs::ConduitDBSink::Dynamic(Box::new(move |from_hh| {
-                    let parsed = parse_writes(from_hh).unwrap();
+                    let parsed = match parse_writes(from_hh) {
+                        Ok(v) => v,
+                        Err(e) => return Err(Box::new(e)),
+                    };
                     trace!("parsed writes");
                     let mut path = path.clone();
                     path.push(MASTODON_CACHE_OLD);

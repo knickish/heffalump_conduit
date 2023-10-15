@@ -6,13 +6,16 @@ use crate::heffalump_hh_types::{Record, TootWrite};
 
 pub(crate) fn parse_writes(
     raw_device_data: Vec<(Vec<u8>, RecordAttributes, u32)>,
-) -> Result<Vec<TootWrite>, ()> {
+) -> std::io::Result<Vec<TootWrite>> {
     let res = raw_device_data
         .into_iter()
         .map(|(operation, _, _)| TootWrite::from_hh_bytes(&operation))
         .collect::<std::io::Result<Vec<_>>>()
-        .unwrap();
-    Ok(res)
+        .map_err(|e| {
+            error!("{}", e);
+            e
+        });
+    res
 }
 
 pub(crate) async fn execute_writes(
