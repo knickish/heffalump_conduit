@@ -19,7 +19,7 @@ pub fn get_client(
 }
 
 pub async fn feed(
-    client: &Box<dyn Megalodon + Send + Sync>,
+    client: &(dyn Megalodon + Send + Sync),
     count: u32,
 ) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
     let options: GetTimelineOptionsWithLocal = GetTimelineOptionsWithLocal {
@@ -62,7 +62,7 @@ fn parsed_toot(status: &megalodon::entities::Status) -> (String, String) {
     for media in attachments {
         content.push_str(
             format!(
-                "\n[img] (Alt Text:{})",
+                "\n[img] (Alt Text: {})",
                 media
                     .description
                     .clone()
@@ -74,7 +74,7 @@ fn parsed_toot(status: &megalodon::entities::Status) -> (String, String) {
 
     if let Some(card) = &status.card {
         match card.description.len() {
-            0 => content.push_str(format!("\n[media] (Alt Text: No Alt Text)").as_str()),
+            0 => content.push_str("\n[media] (Alt Text: No Alt Text)"),
             _ => content.push_str(format!("\n[media] (Alt Text: {})", &card.description).as_str()),
         }
     }
@@ -128,12 +128,8 @@ impl TextDecorator for HeffalumpDecorator {
         "`".to_string()
     }
 
-    fn decorate_preformat_first(&mut self) -> Self::Annotation {
-        ()
-    }
-    fn decorate_preformat_cont(&mut self) -> Self::Annotation {
-        ()
-    }
+    fn decorate_preformat_first(&mut self) -> Self::Annotation {}
+    fn decorate_preformat_cont(&mut self) -> Self::Annotation {}
 
     fn decorate_image(&mut self, _src: &str, title: &str) -> (String, Self::Annotation) {
         (format!("[{}]", title), ())
@@ -173,7 +169,7 @@ mod test {
         let token = env!("HEFFALUMP_ACCESS_TOKEN").to_string();
         let instance = env!("HEFFALUMP_MASTADON_INST").to_string();
         let client = get_client(instance, token);
-        for (author, content) in feed(&client, 100).await.unwrap().0 {
+        for (author, content) in feed(client.as_ref(), 100).await.unwrap().0 {
             println!("{}\n{}", author, content);
         }
     }

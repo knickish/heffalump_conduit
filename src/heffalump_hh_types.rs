@@ -131,7 +131,7 @@ impl Record for TootWrite {
             TootWrite::Favorite(val) => cursor.write_u16::<BigEndian>(*val)?,
             TootWrite::Follow(val) => cursor.write_u16::<BigEndian>(*val)?,
             TootWrite::Reblog(val) => cursor.write_u16::<BigEndian>(*val)?,
-            TootWrite::Toot(toot) => cursor.write_all(&mut toot.clone().to_hh_bytes()?)?,
+            TootWrite::Toot(toot) => cursor.write_all(toot.clone().to_hh_bytes()?.as_ref())?,
         }
 
         Ok(cursor.into_inner())
