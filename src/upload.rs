@@ -52,9 +52,11 @@ async fn execute_single_write(
         TootWrite::Toot(toot) => {
             let options = match toot.is_reply_to {
                 0 => None,
-                val => {
+                // have to emulate an option type because C.
+                //  See TootContentConstuctor in heffalump
+                val @ 1.. => {
                     let mut options = PostStatusInputOptions::default();
-                    let status_id = source.get(val as usize).ok_or(std::io::Error::new(
+                    let status_id = source.get((val - 1) as usize).ok_or(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "Cache seems to have incorrect data",
                     ))?;
@@ -63,7 +65,14 @@ async fn execute_single_write(
                 }
             };
             let content = String::from_utf8_lossy(&toot.contents).into_owned();
-            info!("{}", content);
+            match options
+                .as_ref()
+                .map(|x| x.in_reply_to_id.as_ref())
+                .flatten()
+            {
+                Some(reply_id) => info!("Posting in reply to {}: {}", reply_id, content),
+                None => info!("Posting: {}", content),
+            };
             if let Err(e) = client
                 .post_status(
                     String::from_utf8_lossy(&toot.contents).into_owned(),
