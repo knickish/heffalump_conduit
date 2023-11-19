@@ -23,5 +23,5 @@ jobs:
       
       - uses: actions/upload-artifact@v3
         with:
-          name: heffalump.prc
+          name: heffalump_conduit_installer.exe
           path: target/i686-pc-windows-msvc/release/heffalump_conduit_installer.exe
