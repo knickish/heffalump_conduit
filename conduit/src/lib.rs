@@ -1,5 +1,6 @@
 use std::{
     ffi::{c_long, c_uchar, c_void, CString},
+    fmt::Display,
     path::{Path, PathBuf},
 };
 
@@ -9,6 +10,7 @@ use megalodon::Megalodon;
 use palmrs::database::{record::pdb_record::RecordAttributes, PalmDatabase, PdbDatabase};
 use simplelog::*;
 
+mod config;
 mod download;
 mod heffalump_hh_types;
 mod upload;
@@ -18,12 +20,12 @@ use heffalump_hh_types::{Record, TootAuthor, TootContent};
 use upload::*;
 
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
+const MASTODON_APP_NAME: &str = "Heffalump 0.2 (PalmOS)";
 const AUTHOR_DB: &[u8] = include_bytes!("../include/HeffalumpAuthorDB.pdb");
 const CONTENT_DB: &[u8] = include_bytes!("../include/HeffalumpContentDB.pdb");
-const MASTODON_INST: &str = env!("HEFFALUMP_MASTADON_INST");
-const MASTODON_ACCESS: &str = env!("HEFFALUMP_ACCESS_TOKEN");
 const MASTODON_CACHE_OLD: &str = "heffalump_mastodon_timeline_old.json";
 const MASTODON_CACHE_NEW: &str = "heffalump_mastodon_timeline.json";
+const CONFIG_FILE: &str = "heffalump_config.json";
 
 #[no_mangle]
 /// # Safety
@@ -33,17 +35,40 @@ pub unsafe extern "cdecl" fn OpenConduit(
     _: *const c_void,
     sync_props: *const CSyncProperties,
 ) -> c_long {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let client = get_client(MASTODON_INST.to_owned(), MASTODON_ACCESS.to_owned());
-
     let Some(path) = (unsafe { path_from_sync_props(sync_props) }) else {
         return -1;
     };
     initialize_logger(&path);
 
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let config_path = {
+        let mut owned = path.clone().to_owned();
+        owned.push(CONFIG_FILE);
+        owned
+    };
+    if let Err(std::io::ErrorKind::NotFound) = std::fs::metadata(&config_path).map_err(|e| e.kind())
+    {
+        if runtime
+            .block_on(config::configure(&config_path))
+            .map_err(log_err)
+            .is_err()
+        {
+            return -1;
+        }
+    }
+    let Ok(config) = std::fs::read_to_string(CONFIG_FILE).map_err(log_err) else {
+        return -1;
+    };
+    let Ok((mastodon_inst, mastodon_access)) = serde_json::from_str(&config).map_err(log_err)
+    else {
+        return -1;
+    };
+
+    let client = get_client(mastodon_inst, mastodon_access);
     let Ok((author_db, content_db)) = runtime.block_on(create_dbs(client.as_ref(), Some(&path)))
     else {
         return -1;
@@ -131,6 +156,11 @@ fn initialize_logger(at: &Path) {
     info!("Logger Initialized");
 }
 
+fn log_err<E: Display>(error: E) -> E {
+    error!("{error}");
+    error
+}
+
 async fn create_dbs(
     client: &(dyn Megalodon + Send + Sync),
     write_to_path: Option<&Path>,
@@ -157,7 +187,7 @@ async fn create_dbs(
         base_content.insert_record(RecordAttributes::default(), &content);
     }
     if let Some(path) = write_to_path {
-        let mut owned = path.clone().to_owned();
+        let mut owned = path.to_owned();
         owned.push(MASTODON_CACHE_NEW);
         if std::fs::metadata(&owned).is_ok() {
             // a previous version exists, move it to a different path
@@ -171,22 +201,4 @@ async fn create_dbs(
         file.sync_all().map_err(|e| error!("{}", e))?;
     }
     Ok((base_author, base_content))
-}
-
-#[cfg(test)]
-mod test {
-    use crate::{
-        create_dbs, download::get_client, MASTODON_ACCESS, MASTODON_CACHE_NEW, MASTODON_INST,
-    };
-
-    #[tokio::test]
-    async fn test_create() {
-        let mut path = std::env::temp_dir();
-        let client = get_client(MASTODON_INST.to_owned(), MASTODON_ACCESS.to_owned());
-        let (auth, cont) = create_dbs(client.as_ref(), Some(&path)).await.unwrap();
-        dbg!(auth.to_bytes().unwrap().len());
-        dbg!(cont.to_bytes().unwrap().len());
-        path.push(MASTODON_CACHE_NEW);
-        assert!(std::fs::metadata(&path).is_ok())
-    }
 }
