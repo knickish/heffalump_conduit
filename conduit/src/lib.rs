@@ -60,7 +60,7 @@ pub unsafe extern "cdecl" fn OpenConduit(
             return -1;
         }
     }
-    let Ok(config) = std::fs::read_to_string(CONFIG_FILE).map_err(log_err) else {
+    let Ok(config) = std::fs::read_to_string(config_path).map_err(log_err) else {
         return -1;
     };
     let Ok((mastodon_inst, mastodon_access)) = serde_json::from_str(&config).map_err(log_err)
