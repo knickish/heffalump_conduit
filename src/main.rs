@@ -1,10 +1,13 @@
-use std::ffi::{c_uchar, CString};
+use std::{ffi::{c_uchar, CString}, env};
 
 use hotsync_conduit_rs::{ConduitInstallation, ConduitManager};
 
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
+const CONDUIT_BYTES: &[u8] = include_bytes!(env!("CARGO_CDYLIB_FILE_HEFFALUMP_CONDUIT"));
+
 
 fn main() {
+    
     let creator = {
         let mut creator = [char::default(); 4];
         for (i, c) in CREATOR.into_iter().enumerate() {
@@ -23,6 +26,8 @@ fn main() {
 
     ConduitManager::initialize()
         .unwrap()
-        .reinstall(builder)
+        .reinstall(builder, Some(CONDUIT_BYTES))
         .unwrap();
+
+
 }

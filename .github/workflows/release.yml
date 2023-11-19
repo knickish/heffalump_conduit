@@ -1,0 +1,27 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+          targets: "i686-pc-windows-msvc"
+
+      - name: Build the installer
+        run: cargo build --release
+      
+      - uses: actions/upload-artifact@v3
+        with:
+          name: heffalump.prc
+          path: target/i686-pc-windows-msvc/release/heffalump_conduit_installer.exe

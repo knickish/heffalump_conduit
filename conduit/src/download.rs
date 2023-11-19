@@ -5,6 +5,8 @@ use megalodon::{
     Megalodon,
 };
 
+use crate::MASTODON_APP_NAME;
+
 pub fn get_client(
     mastodon_instance: String,
     access_token: String,
@@ -14,7 +16,7 @@ pub fn get_client(
         megalodon::SNS::Mastodon,
         full_instance_url,
         Some(access_token),
-        Some(String::from("Heffalump 0.2 (PalmOS)")),
+        Some(String::from(MASTODON_APP_NAME)),
     )
 }
 
