@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 byteorder = "1.4.3"
+encoding = "0.2.33"
 hotsync_conduit_rs = { git = "https://github.com/knickish/hotsync_conduit_rs", tag = "0.2.2"}
 html2text = "0.6.0"
 log = "0.4.20"
@@ -22,7 +23,3 @@ winapi = { version = "0.3.9", features = ["consoleapi"] }
 
 [lib]
 crate-type = ["cdylib"]
-
-[[bin]]
-path = "src/install.rs"
-name = "heffalump_conduit_install"
