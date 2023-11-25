@@ -50,6 +50,7 @@ pub unsafe extern "cdecl" fn OpenConduit(
         owned.push(CONFIG_FILE);
         owned
     };
+
     if let Err(std::io::ErrorKind::NotFound) = std::fs::metadata(&config_path).map_err(|e| e.kind())
     {
         if runtime
@@ -60,9 +61,11 @@ pub unsafe extern "cdecl" fn OpenConduit(
             return -1;
         }
     }
+
     let Ok(config) = std::fs::read_to_string(config_path).map_err(log_err) else {
         return -1;
     };
+
     let Ok((mastodon_inst, mastodon_access)) = serde_json::from_str(&config).map_err(log_err)
     else {
         return -1;
@@ -86,9 +89,13 @@ pub unsafe extern "cdecl" fn OpenConduit(
                     trace!("parsed writes");
                     let mut path = path.clone();
                     path.push(MASTODON_CACHE_OLD);
-                    let source_file = match std::fs::File::open(&path) {
-                        Ok(f) => f,
-                        Err(e) => {
+                    let source_file = match (std::fs::File::open(&path), parsed.len()) {
+                        (Ok(f), _) => f,
+                        (Err(_), 0) => {
+                            // We can't find the cache, but don't have anything to write anyway
+                            return Ok(());
+                        }
+                        (Err(e), _) => {
                             error!("Failed to open cache: {}", e);
                             return Err(Box::new(e));
                         }
@@ -135,12 +142,15 @@ unsafe fn path_from_sync_props(props: *const CSyncProperties) -> Option<PathBuf>
     }
 }
 
-fn to_ascii_c(arg: String) -> Vec<u8> {
-    arg.chars()
-        .filter(char::is_ascii)
-        .chain(std::iter::once::<char>('\0'))
-        .collect::<String>()
-        .into_bytes()
+fn to_latin_1(arg: String) -> Vec<u8> {
+    use encoding::{
+        all::ISO_8859_1,
+        {EncoderTrap, Encoding},
+    };
+
+    ISO_8859_1
+        .encode(arg.as_str(), EncoderTrap::Ignore)
+        .expect("Ignoring non-encodable chars, this shouldn't be reachable")
 }
 
 fn initialize_logger(at: &Path) {
@@ -172,14 +182,14 @@ async fn create_dbs(
     let (contents, raw) = feed(client, 1000).await.map_err(|e| error!("{}", e))?;
     for (idx, (author, content)) in contents.into_iter().enumerate() {
         let author = TootAuthor {
-            author_name: to_ascii_c(author),
+            author_name: to_latin_1(author),
         }
         .to_hh_bytes()
         .map_err(|e| error!("{}", e))?;
         let content = TootContent {
             author: idx as u16,
             is_reply_to: 0,
-            contents: to_ascii_c(content),
+            contents: to_latin_1(content),
         }
         .to_hh_bytes()
         .map_err(|e| error!("{}", e))?;

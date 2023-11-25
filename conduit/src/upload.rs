@@ -1,5 +1,5 @@
 use log::{error, info};
-use megalodon::{entities::Status, megalodon::PostStatusInputOptions, Megalodon};
+use megalodon::{entities::Status, error::Error, megalodon::PostStatusInputOptions, Megalodon};
 use palmrs::database::record::pdb_record::RecordAttributes;
 
 use crate::heffalump_hh_types::{Record, TootWrite};
@@ -21,7 +21,7 @@ pub(crate) async fn execute_writes(
     client: &(dyn Megalodon + Send + Sync),
     writes: Vec<TootWrite>,
     source: Vec<Status>,
-) -> Result<(), megalodon::error::Error> {
+) -> Result<(), Error> {
     for write in writes {
         execute_single_write(client, write, &source).await?;
     }
@@ -32,7 +32,7 @@ async fn execute_single_write(
     client: &(dyn Megalodon + Send + Sync),
     write: TootWrite,
     source: &[Status],
-) -> Result<(), megalodon::error::Error> {
+) -> Result<(), Error> {
     match write {
         TootWrite::Favorite(fav) => {
             let status = source.get(fav as usize).ok_or(std::io::Error::new(
@@ -64,22 +64,29 @@ async fn execute_single_write(
                     Some(options)
                 }
             };
-            let content = String::from_utf8_lossy(&toot.contents).into_owned();
+
+            use encoding::all::ISO_8859_1;
+            use encoding::{DecoderTrap, Encoding};
+            let content = match ISO_8859_1.decode(&toot.contents, DecoderTrap::Strict) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Error decoding text from handheld: {e}");
+                    return Err(Error::StandardError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        e.to_string().as_str(),
+                    )));
+                }
+            };
+
             match options
                 .as_ref()
                 .map(|x| x.in_reply_to_id.as_ref())
                 .flatten()
             {
-                Some(reply_id) => info!("Posting in reply to {}: {}", reply_id, content),
-                None => info!("Posting: {}", content),
+                Some(reply_id) => info!("Posting in reply to {}: {}", reply_id, &content),
+                None => info!("Posting: {}", &content),
             };
-            if let Err(e) = client
-                .post_status(
-                    String::from_utf8_lossy(&toot.contents).into_owned(),
-                    options.as_ref(),
-                )
-                .await
-            {
+            if let Err(e) = client.post_status(content, options.as_ref()).await {
                 error!("{}", e);
                 return Err(e);
             };
