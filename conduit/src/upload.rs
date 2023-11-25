@@ -64,22 +64,22 @@ async fn execute_single_write(
                     Some(options)
                 }
             };
-            let content = String::from_utf8_lossy(&toot.contents).into_owned();
+
+            use encoding::all::ISO_8859_1;
+            use encoding::{DecoderTrap, Encoding};
+            let content = ISO_8859_1
+                .decode(&toot.contents, DecoderTrap::Ignore)
+                .unwrap();
+
             match options
                 .as_ref()
                 .map(|x| x.in_reply_to_id.as_ref())
                 .flatten()
             {
-                Some(reply_id) => info!("Posting in reply to {}: {}", reply_id, content),
-                None => info!("Posting: {}", content),
+                Some(reply_id) => info!("Posting in reply to {}: {}", reply_id, &content),
+                None => info!("Posting: {}", &content),
             };
-            if let Err(e) = client
-                .post_status(
-                    String::from_utf8_lossy(&toot.contents).into_owned(),
-                    options.as_ref(),
-                )
-                .await
-            {
+            if let Err(e) = client.post_status(content, options.as_ref()).await {
                 error!("{}", e);
                 return Err(e);
             };
