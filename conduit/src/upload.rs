@@ -2,7 +2,7 @@ use log::{error, info};
 use megalodon::{entities::Status, error::Error, megalodon::PostStatusInputOptions, Megalodon};
 use palmrs::database::record::pdb_record::RecordAttributes;
 
-use crate::heffalump_hh_types::{Record, TootWrite};
+use crate::heffalump_hh_types::{OnDevice, TootWrite};
 
 pub(crate) fn parse_writes(
     raw_device_data: Vec<(Vec<u8>, RecordAttributes, u32)>,

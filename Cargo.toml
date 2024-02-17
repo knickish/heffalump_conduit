@@ -7,3 +7,7 @@ resolver = "2"
 [dependencies]
 hotsync_conduit_rs = { git = "https://github.com/knickish/hotsync_conduit_rs", tag = "v0.3.1" }
 heffalump_conduit = { path = "conduit" , artifact = "cdylib", target = "i686-pc-windows-msvc" }
+
+
+[patch."https://github.com/knickish/hotsync_conduit_rs"]
+hotsync_conduit_rs = { path = "../hotsync_conduit_rs" }
