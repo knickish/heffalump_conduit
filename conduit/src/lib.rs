@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hotsync_conduit_rs::{CSyncProperties, ConduitBuilder, ConduitDBSource};
+use hotsync_conduit_rs::{CSyncProperties, ConduitBuilder, ConduitDBSource, PreferenceType};
 use log::{error, info, trace};
 use megalodon::Megalodon;
 use palmrs::database::{record::pdb_record::RecordAttributes, PalmDatabase, PdbDatabase};
@@ -16,7 +16,7 @@ mod heffalump_hh_types;
 mod upload;
 
 use download::{feed, get_client};
-use heffalump_hh_types::{Record, TootAuthor, TootContent};
+use heffalump_hh_types::{HeffalumpPrefs, OnDevice, TootAuthor, TootContent};
 use upload::*;
 
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
@@ -78,7 +78,7 @@ pub unsafe extern "cdecl" fn OpenConduit(
     };
 
     let conduit =
-        ConduitBuilder::new_with_name_creator(CString::new("heffalump_conduit").unwrap(), CREATOR)
+        ConduitBuilder::<HeffalumpPrefs>::new_with_name_creator(CString::new("heffalump_conduit").unwrap(), CREATOR)
             .download_db_and(
                 CString::new("HeffalumpWritesDB").unwrap(),
                 hotsync_conduit_rs::ConduitDBSink::Dynamic(Box::new(move |from_hh| {
@@ -124,6 +124,7 @@ pub unsafe extern "cdecl" fn OpenConduit(
                 [b'T', b'o', b'o', b't'],
                 content_db,
             ))
+            .set_preferences(PreferenceType::Static(1, HeffalumpPrefs{ self_content_start: 0, test: CString::new("Preference!").unwrap() }))
             .build();
 
     match conduit.sync() {

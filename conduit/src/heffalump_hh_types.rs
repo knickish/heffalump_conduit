@@ -31,11 +31,26 @@
 //     TootWriteContent content;
 // }
 
+// typedef struct HeffalumpPrefs_s {
+//     UInt16          timeline_content_start;
+//     UInt16          self_content_start;
+//     UInt16          reply_content_start;
+//     UInt16          reply_content_end;
+// } HeffalumpPrefs;
+
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::debug;
-use std::io::{Cursor, Read, Write};
+use std::{ffi::CString, io::{Cursor, Read, Write}};
 
-pub trait Record: Sized {
+#[derive(Debug, Clone)]
+pub(crate) struct HeffalumpPrefs {
+    pub(crate) self_content_start: u16,
+    pub(crate) test: CString  
+    // reply_content_start: u16,
+    // reply_content_end: u16,
+}
+
+pub trait OnDevice: Sized {
     fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>>;
     fn from_hh_bytes(bytes: &[u8]) -> std::io::Result<Self>;
 }
@@ -73,7 +88,7 @@ impl TootWrite {
     }
 }
 
-impl Record for TootContent {
+impl OnDevice for TootContent {
     fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
         cursor.write_u16::<BigEndian>(self.author)?;
@@ -104,7 +119,7 @@ impl Record for TootContent {
     }
 }
 
-impl Record for TootAuthor {
+impl OnDevice for TootAuthor {
     fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
         cursor.write_u8(self.author_name.len() as u8)?;
@@ -123,7 +138,7 @@ impl Record for TootAuthor {
     }
 }
 
-impl Record for TootWrite {
+impl OnDevice for TootWrite {
     fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
         cursor.write_u16::<BigEndian>(self.c_enum_val())?;
@@ -152,5 +167,42 @@ impl Record for TootWrite {
                 "Invalid discriminant",
             )),
         }
+    }
+}
+
+impl OnDevice for HeffalumpPrefs {
+    fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>> {
+        let mut cursor = Cursor::new(Vec::new());
+        cursor.write_u16::<BigEndian>(self.self_content_start)?;
+        cursor.write_all(self.test.as_bytes_with_nul())?;
+        Ok(cursor.into_inner())
+    }
+
+    fn from_hh_bytes(bytes: &[u8]) -> std::io::Result<Self> {
+        let mut cursor = Cursor::new(bytes);
+        let num = cursor.read_u16::<BigEndian>()?;
+        let str = CString::from_vec_with_nul(cursor.get_ref()[(cursor.position() as usize)..].to_owned())
+            .map_err(|_| std::io::Error::new(
+                std::io::ErrorKind::InvalidData, 
+                "Could not read preferences from device"
+            ))?;
+
+        Ok(HeffalumpPrefs { self_content_start: num, test: str })
+    }
+}
+
+impl TryFrom<Vec<u8>> for HeffalumpPrefs {
+    type Error = std::io::Error;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        HeffalumpPrefs::from_hh_bytes(&value)
+    }
+}
+
+impl TryInto<Vec<u8>> for HeffalumpPrefs {
+    type Error = std::io::Error;
+
+    fn try_into(self) -> Result<Vec<u8>, Self::Error> {
+        self.to_hh_bytes()
     }
 }
