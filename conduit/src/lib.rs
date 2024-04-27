@@ -124,7 +124,7 @@ pub unsafe extern "cdecl" fn OpenConduit(
                 [b'T', b'o', b'o', b't'],
                 content_db,
             ))
-            .set_preferences(PreferenceType::Static(1, HeffalumpPrefs{ self_content_start: 0, test: CString::new("Preference!").unwrap() }))
+            .set_preferences(PreferenceType::Static(0, HeffalumpPrefs{ self_content_start: 0, test: CString::new("Preference!").unwrap() }))
             .build();
 
     match conduit.sync() {
