@@ -1,7 +1,7 @@
 use html2text::render::text_renderer::{TaggedLine, TextDecorator};
 use megalodon::{
     entities::{Attachment, Status},
-    megalodon::GetTimelineOptionsWithLocal,
+    megalodon::{GetAccountStatusesInputOptions, GetTimelineOptionsWithLocal},
     Megalodon,
 };
 
@@ -35,6 +35,37 @@ pub async fn feed(
     let res = client.get_home_timeline(Some(&options)).await?.json();
 
     Ok((res.iter().map(parsed_toot).collect(), res))
+}
+
+pub async fn self_posts(
+    client: &(dyn Megalodon + Send + Sync),
+    count: u32,
+) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
+    let acct = client.verify_account_credentials().await?;
+    let options = GetAccountStatusesInputOptions {
+        only_media: None,
+        limit: Some(count),
+        max_id: None,
+        since_id: None,
+        pinned: None,
+        exclude_replies: None,
+        exclude_reblogs: None,
+    };
+    let res = client
+        .get_account_statuses(acct.json.id, Some(&options))
+        .await?
+        .json();
+
+    Ok((res.iter().map(parsed_toot).collect(), res))
+}
+
+#[allow(unused)]
+pub async fn replies(
+    client: &(dyn Megalodon + Send + Sync),
+    posts: impl Iterator<Item = &Status>,
+    max_replies_each: usize,
+) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
+    Ok((Vec::new(), Vec::new()))
 }
 
 fn parsed_toot(status: &megalodon::entities::Status) -> (String, String) {

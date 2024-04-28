@@ -1,6 +1,7 @@
 // typedef struct TootContent_s {
 //     UInt16  author;
 //     UInt16  is_reply_to;
+//     UInt16  replies_start;
 //     UInt16  content_len;
 //     char    toot_content[];
 // } TootContent;
@@ -40,14 +41,13 @@
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::debug;
-use std::{ffi::CString, io::{Cursor, Read, Write}};
+use std::io::{Cursor, Read, Write};
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct HeffalumpPrefs {
-    pub(crate) self_content_start: u16,
-    pub(crate) test: CString  
-    // reply_content_start: u16,
-    // reply_content_end: u16,
+    pub(crate) home_timeline_len: u16,
+    pub(crate) self_timeline_len: u16,
+    pub(crate) reply_content_len: u16,
 }
 
 pub trait OnDevice: Sized {
@@ -59,11 +59,12 @@ pub trait OnDevice: Sized {
 pub(crate) struct TootContent {
     pub(crate) author: u16,
     pub(crate) is_reply_to: u16,
+    pub(crate) replies_start: u16,
     // pub(crate) content_len: u16, not used in rust, needed in c
     pub(crate) contents: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TootAuthor {
     // pub(crate) author_name_len: u16, not used in rust, needed in c
     pub(crate) author_name: Vec<u8>,
@@ -93,6 +94,7 @@ impl OnDevice for TootContent {
         let mut cursor = Cursor::new(Vec::new());
         cursor.write_u16::<BigEndian>(self.author)?;
         cursor.write_u16::<BigEndian>(self.is_reply_to)?;
+        cursor.write_u16::<BigEndian>(self.replies_start)?;
         cursor.write_u16::<BigEndian>(self.contents.len() as u16)?;
         cursor.write_all(&self.contents)?;
 
@@ -103,6 +105,7 @@ impl OnDevice for TootContent {
         let mut cursor = Cursor::new(bytes);
         let author = cursor.read_u16::<BigEndian>()?;
         let is_reply_to = cursor.read_u16::<BigEndian>()?;
+        let replies_start = cursor.read_u16::<BigEndian>()?;
         let content_len = cursor.read_u16::<BigEndian>()? as usize;
 
         if content_len == 0 {
@@ -114,6 +117,7 @@ impl OnDevice for TootContent {
         Ok(Self {
             author,
             is_reply_to,
+            replies_start,
             contents: content_buf,
         })
     }
@@ -130,7 +134,7 @@ impl OnDevice for TootAuthor {
 
     fn from_hh_bytes(bytes: &[u8]) -> std::io::Result<Self> {
         let mut cursor = Cursor::new(bytes);
-        let mut content_buf = vec![0_u8; cursor.read_u16::<BigEndian>()? as usize];
+        let mut content_buf = vec![0_u8; cursor.read_u8()? as usize];
         cursor.read_exact(&mut content_buf)?;
         Ok(Self {
             author_name: content_buf,
@@ -173,21 +177,20 @@ impl OnDevice for TootWrite {
 impl OnDevice for HeffalumpPrefs {
     fn to_hh_bytes(&self) -> std::io::Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
-        cursor.write_u16::<BigEndian>(self.self_content_start)?;
-        cursor.write_all(self.test.as_bytes_with_nul())?;
+        cursor.write_u16::<BigEndian>(self.home_timeline_len)?;
+        cursor.write_u16::<BigEndian>(self.self_timeline_len)?;
+        cursor.write_u16::<BigEndian>(self.reply_content_len)?;
         Ok(cursor.into_inner())
     }
 
     fn from_hh_bytes(bytes: &[u8]) -> std::io::Result<Self> {
         let mut cursor = Cursor::new(bytes);
-        let num = cursor.read_u16::<BigEndian>()?;
-        let str = CString::from_vec_with_nul(cursor.get_ref()[(cursor.position() as usize)..].to_owned())
-            .map_err(|_| std::io::Error::new(
-                std::io::ErrorKind::InvalidData, 
-                "Could not read preferences from device"
-            ))?;
 
-        Ok(HeffalumpPrefs { self_content_start: num, test: str })
+        Ok(HeffalumpPrefs {
+            home_timeline_len: cursor.read_u16::<BigEndian>()?,
+            self_timeline_len: cursor.read_u16::<BigEndian>()?,
+            reply_content_len: cursor.read_u16::<BigEndian>()?,
+        })
     }
 }
 

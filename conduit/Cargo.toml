@@ -16,6 +16,7 @@ open = "5.0.0"
 palmrs = { git = "https://github.com/u1f408/palmrs", rev = "008687c" }
 pollster = "0.3.0"
 scraper = "0.17.1"
+serde = { version = "1.0.199", features = ["derive"] }
 serde_json = {version = "1.0.107", features = ["preserve_order"]}
 simplelog = "0.12.1"
 tokio = { version = "1.32.0", features = ["tokio-macros"] }

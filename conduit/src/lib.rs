@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     ffi::{c_long, c_uchar, c_void, CString},
     fmt::Display,
     path::{Path, PathBuf},
@@ -15,7 +16,7 @@ mod download;
 mod heffalump_hh_types;
 mod upload;
 
-use download::{feed, get_client};
+use download::{feed, get_client, replies, self_posts};
 use heffalump_hh_types::{HeffalumpPrefs, OnDevice, TootAuthor, TootContent};
 use upload::*;
 
@@ -26,6 +27,10 @@ const CONTENT_DB: &[u8] = include_bytes!("../include/HeffalumpContentDB.pdb");
 const MASTODON_CACHE_OLD: &str = "heffalump_mastodon_timeline_old.json";
 const MASTODON_CACHE_NEW: &str = "heffalump_mastodon_timeline.json";
 const CONFIG_FILE: &str = "heffalump_config.json";
+
+const DB_NAME_CONTENT: &str = "HeffalumpContentDB";
+const DB_NAME_AUTHOR: &str = "HeffalumpAuthorDB";
+const DB_NAME_WRITES: &str = "HeffalumpWritesDB";
 
 #[no_mangle]
 /// # Safety
@@ -72,60 +77,68 @@ pub unsafe extern "cdecl" fn OpenConduit(
     };
 
     let client = get_client(mastodon_inst, mastodon_access);
-    let Ok((author_db, content_db)) = runtime.block_on(create_dbs(client.as_ref(), Some(&path)))
+    let Ok((author_db, content_db, prefs)) =
+        runtime.block_on(create_dbs(client.as_ref(), Some(&path)))
     else {
         return -1;
     };
 
-    let conduit =
-        ConduitBuilder::<HeffalumpPrefs>::new_with_name_creator(CString::new("heffalump_conduit").unwrap(), CREATOR)
-            .download_db_and(
-                CString::new("HeffalumpWritesDB").unwrap(),
-                hotsync_conduit_rs::ConduitDBSink::Dynamic(Box::new(move |from_hh| {
-                    let parsed = match parse_writes(from_hh) {
-                        Ok(v) => v,
-                        Err(e) => return Err(Box::new(e)),
-                    };
-                    trace!("parsed writes");
-                    let mut path = path.clone();
-                    path.push(MASTODON_CACHE_OLD);
-                    let source_file = match (std::fs::File::open(&path), parsed.len()) {
-                        (Ok(f), _) => f,
-                        (Err(_), 0) => {
-                            // We can't find the cache, but don't have anything to write anyway
-                            return Ok(());
-                        }
-                        (Err(e), _) => {
-                            error!("Failed to open cache: {}", e);
-                            return Err(Box::new(e));
-                        }
-                    };
-                    trace!("found cache");
-                    let source =
-                        serde_json::from_reader(&source_file).expect("Cannot deserialize cache");
-                    trace!("deserialized cache");
-                    if let Err(e) =
-                        runtime.block_on(execute_writes(client.as_ref(), parsed, source))
-                    {
-                        error!("Failed to write with result: {}", e);
-                        return Err(Box::new(e));
-                    }
-                    trace!("executed writes");
-                    Ok(())
-                })),
-            )
-            .overwrite_db(ConduitDBSource::Static(
-                CString::new("HeffalumpAuthorDB").unwrap(),
-                [b'A', b'u', b't', b'h'],
-                author_db,
-            ))
-            .overwrite_db(ConduitDBSource::Static(
-                CString::new("HeffalumpContentDB").unwrap(),
-                [b'T', b'o', b'o', b't'],
-                content_db,
-            ))
-            .set_preferences(PreferenceType::Static(0, HeffalumpPrefs{ self_content_start: 0, test: CString::new("Preference!").unwrap() }))
-            .build();
+    let conduit = ConduitBuilder::<HeffalumpPrefs>::new_with_name_creator(
+        CString::new("heffalump_conduit").unwrap(),
+        CREATOR,
+    )
+    .download_db_and(
+        CString::new(DB_NAME_WRITES).unwrap(),
+        hotsync_conduit_rs::ConduitDBSink::Dynamic(Box::new(move |from_hh| {
+            let parsed = match parse_writes(from_hh) {
+                Ok(v) => v,
+                Err(e) => return Err(Box::new(e)),
+            };
+            trace!("parsed writes");
+            let mut path = path.clone();
+            path.push(MASTODON_CACHE_OLD);
+            let source_file = match (std::fs::File::open(&path), parsed.len()) {
+                (Ok(f), _) => f,
+                (Err(_), 0) => {
+                    // We can't find the cache, but don't have anything to write anyway
+                    return Ok(());
+                }
+                (Err(e), _) => {
+                    error!("Failed to open cache: {}", e);
+                    return Err(Box::new(e));
+                }
+            };
+            trace!("found cache");
+            let (prefs, source) = match serde_json::from_reader(&source_file) {
+                Ok(ok) => ok,
+                Err(e) => {
+                    error!("Failed to deserialize cache with error: {}", e);
+                    return Err(Box::new(e));
+                }
+            };
+            trace!("deserialized cache");
+
+            if let Err(e) = runtime.block_on(execute_writes(client.as_ref(), parsed, source, prefs))
+            {
+                error!("Failed to write with result: {}", e);
+                return Err(Box::new(e));
+            }
+            trace!("executed writes");
+            Ok(())
+        })),
+    )
+    .overwrite_db(ConduitDBSource::Static(
+        CString::new(DB_NAME_AUTHOR).unwrap(),
+        [b'A', b'u', b't', b'h'],
+        author_db,
+    ))
+    .overwrite_db(ConduitDBSource::Static(
+        CString::new(DB_NAME_CONTENT).unwrap(),
+        [b'T', b'o', b'o', b't'],
+        content_db,
+    ))
+    .set_preferences(PreferenceType::Static(0, prefs))
+    .build();
 
     match conduit.sync() {
         Ok(_) => 0,
@@ -143,15 +156,21 @@ unsafe fn path_from_sync_props(props: *const CSyncProperties) -> Option<PathBuf>
     }
 }
 
-fn to_latin_1(arg: String) -> Vec<u8> {
+fn to_latin_1(arg: impl AsRef<str>, add_null: bool) -> Vec<u8> {
     use encoding::{
         all::ISO_8859_1,
         {EncoderTrap, Encoding},
     };
 
-    ISO_8859_1
-        .encode(arg.as_str(), EncoderTrap::Ignore)
-        .expect("Ignoring non-encodable chars, this shouldn't be reachable")
+    let mut ret = ISO_8859_1
+        .encode(arg.as_ref(), EncoderTrap::Ignore)
+        .expect("Ignoring non-encodable chars, this shouldn't be reachable");
+
+    if add_null {
+        ret.push(0);
+    }
+
+    ret
 }
 
 fn initialize_logger(at: &Path) {
@@ -175,28 +194,65 @@ fn log_err<E: Display>(error: E) -> E {
 async fn create_dbs(
     client: &(dyn Megalodon + Send + Sync),
     write_to_path: Option<&Path>,
-) -> Result<(PalmDatabase<PdbDatabase>, PalmDatabase<PdbDatabase>), ()> {
+) -> Result<
+    (
+        PalmDatabase<PdbDatabase>,
+        PalmDatabase<PdbDatabase>,
+        HeffalumpPrefs,
+    ),
+    (),
+> {
     let mut base_author =
         PalmDatabase::<PdbDatabase>::from_bytes(AUTHOR_DB).map_err(|e| error!("{}", e))?;
     let mut base_content =
         PalmDatabase::<PdbDatabase>::from_bytes(CONTENT_DB).map_err(|e| error!("{}", e))?;
-    let (contents, raw) = feed(client, 1000).await.map_err(|e| error!("{}", e))?;
-    for (idx, (author, content)) in contents.into_iter().enumerate() {
-        let author = TootAuthor {
-            author_name: to_latin_1(author),
-        }
-        .to_hh_bytes()
+    let mut prefs = HeffalumpPrefs::default();
+
+    let (feed_contents, mut feed_raw) = feed(client, 1000).await.map_err(|e| error!("{}", e))?;
+    let (self_contents, self_raw) = self_posts(client, 100).await.map_err(|e| error!("{}", e))?;
+    let (reply_contents, reply_raw) = replies(client, feed_raw.iter().chain(self_raw.iter()), 10)
+        .await
         .map_err(|e| error!("{}", e))?;
+
+    prefs.home_timeline_len = feed_contents.len() as u16;
+    prefs.self_timeline_len = self_contents.len() as u16;
+    prefs.reply_content_len = reply_contents.len() as u16;
+
+    feed_raw.extend(self_raw);
+    feed_raw.extend(reply_raw);
+
+    let authors = self_contents
+        .iter()
+        .chain(&feed_contents)
+        .chain(&reply_contents)
+        .map(|(author, _)| (author.to_string(), to_latin_1(author, true)))
+        .collect::<BTreeMap<_, _>>();
+
+    for (author, content) in feed_contents.into_iter() {
+        let (idx, _) = authors
+            .iter()
+            .enumerate()
+            .find(|(_idx, (k, _v))| k == &&author)
+            .to_owned()
+            .unwrap();
         let content = TootContent {
             author: idx as u16,
             is_reply_to: 0,
-            contents: to_latin_1(content),
+            replies_start: 0,
+            contents: to_latin_1(content, false),
         }
         .to_hh_bytes()
         .map_err(|e| error!("{}", e))?;
-        base_author.insert_record(RecordAttributes::default(), &author);
         base_content.insert_record(RecordAttributes::default(), &content);
     }
+
+    for author_name in authors.into_values() {
+        let author = TootAuthor { author_name }
+            .to_hh_bytes()
+            .map_err(|e| error!("{}", e))?;
+        base_author.insert_record(RecordAttributes::default(), &author);
+    }
+
     if let Some(path) = write_to_path {
         let mut owned = path.to_owned();
         owned.push(MASTODON_CACHE_NEW);
@@ -208,8 +264,8 @@ async fn create_dbs(
             std::fs::rename(&owned, &prev).map_err(|e| error!("{}", e))?;
         }
         let file = std::fs::File::create(&owned).map_err(|e| error!("{}", e))?;
-        serde_json::to_writer(&file, &raw).map_err(|e| error!("{}", e))?;
+        serde_json::to_writer(&file, &(&prefs, feed_raw)).map_err(|e| error!("{}", e))?;
         file.sync_all().map_err(|e| error!("{}", e))?;
     }
-    Ok((base_author, base_content))
+    Ok((base_author, base_content, prefs))
 }
