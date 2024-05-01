@@ -24,15 +24,23 @@ pub async fn feed(
     client: &(dyn Megalodon + Send + Sync),
     count: u32,
 ) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
-    let options: GetTimelineOptionsWithLocal = GetTimelineOptionsWithLocal {
-        only_media: None,
-        limit: Some(count),
-        max_id: None,
-        since_id: None,
-        min_id: None,
-        local: None,
-    };
-    let res = client.get_home_timeline(Some(&options)).await?.json();
+    let mut res = Vec::new();
+    while res.len() != count as usize {
+        let options: GetTimelineOptionsWithLocal = GetTimelineOptionsWithLocal {
+            only_media: None,
+            limit: Some(count - res.len() as u32),
+            max_id: res.iter().last().map(|t: &Status| t.id.clone()),
+            since_id: None,
+            min_id: None,
+            local: None,
+        };
+        let tmp = client.get_home_timeline(Some(&options)).await?.json();
+        if tmp .len() == 0 {
+            break
+        }
+        res.extend(tmp);
+    }
+    
 
     Ok((res.iter().map(parsed_toot).collect(), res))
 }

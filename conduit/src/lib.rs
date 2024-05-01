@@ -82,6 +82,7 @@ pub unsafe extern "cdecl" fn OpenConduit(
     else {
         return -1;
     };
+    info!("{:?}", &prefs);
 
     let conduit = ConduitBuilder::<HeffalumpPrefs>::new_with_name_creator(
         CString::new("heffalump_conduit").unwrap(),
@@ -208,8 +209,8 @@ async fn create_dbs(
         PalmDatabase::<PdbDatabase>::from_bytes(CONTENT_DB).map_err(|e| error!("{}", e))?;
     let mut prefs = HeffalumpPrefs::default();
 
-    let (feed_contents, mut feed_raw) = feed(client, 1000).await.map_err(|e| error!("{}", e))?;
-    let (self_contents, self_raw) = self_posts(client, 100).await.map_err(|e| error!("{}", e))?;
+    let (feed_contents, mut feed_raw) = feed(client, 250).await.map_err(|e| error!("{}", e))?;
+    let (self_contents, self_raw) = self_posts(client, 40).await.map_err(|e| error!("{}", e))?;
     let (reply_contents, reply_raw) = replies(client, feed_raw.iter().chain(self_raw.iter()), 10)
         .await
         .map_err(|e| error!("{}", e))?;
@@ -228,7 +229,10 @@ async fn create_dbs(
         .map(|(author, _)| (author.to_string(), to_latin_1(author, true)))
         .collect::<BTreeMap<_, _>>();
 
-    for (author, content) in feed_contents.into_iter() {
+    for (author, content) in feed_contents
+        .into_iter()
+        .chain(self_contents)
+        .chain(reply_contents)  {
         let (idx, _) = authors
             .iter()
             .enumerate()
