@@ -2,7 +2,7 @@ use log::{error, info};
 use megalodon::{entities::Status, error::Error, megalodon::PostStatusInputOptions, Megalodon};
 use palmrs::database::record::pdb_record::RecordAttributes;
 
-use crate::heffalump_hh_types::{Record, TootWrite};
+use crate::heffalump_hh_types::{HeffalumpPrefs, OnDevice, TootWrite};
 
 pub(crate) fn parse_writes(
     raw_device_data: Vec<(Vec<u8>, RecordAttributes, u32)>,
@@ -21,6 +21,7 @@ pub(crate) async fn execute_writes(
     client: &(dyn Megalodon + Send + Sync),
     writes: Vec<TootWrite>,
     source: Vec<Status>,
+    _prefs: HeffalumpPrefs,
 ) -> Result<(), Error> {
     for write in writes {
         execute_single_write(client, write, &source).await?;

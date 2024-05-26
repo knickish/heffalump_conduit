@@ -1,7 +1,10 @@
 use html2text::render::text_renderer::{TaggedLine, TextDecorator};
+use log::info;
 use megalodon::{
     entities::{Attachment, Status},
-    megalodon::GetTimelineOptionsWithLocal,
+    megalodon::{
+        GetAccountStatusesInputOptions, GetStatusContextInputOptions, GetTimelineOptionsWithLocal,
+    },
     Megalodon,
 };
 
@@ -24,17 +27,74 @@ pub async fn feed(
     client: &(dyn Megalodon + Send + Sync),
     count: u32,
 ) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
-    let options: GetTimelineOptionsWithLocal = GetTimelineOptionsWithLocal {
+    let mut res = Vec::new();
+    while res.len() != count as usize {
+        let options: GetTimelineOptionsWithLocal = GetTimelineOptionsWithLocal {
+            only_media: None,
+            limit: Some(count - res.len() as u32),
+            max_id: res.iter().last().map(|t: &Status| t.id.clone()),
+            since_id: None,
+            min_id: None,
+            local: None,
+        };
+        let mut tmp = client.get_home_timeline(Some(&options)).await?.json();
+        if tmp.len() == 0 {
+            break;
+        }
+        // dont show replies in main feed
+        tmp.retain(|p| p.in_reply_to_account_id.is_none());
+        res.extend(tmp);
+    }
+
+    Ok((res.iter().map(parsed_toot).collect(), res))
+}
+
+pub async fn self_posts(
+    client: &(dyn Megalodon + Send + Sync),
+    count: u32,
+) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
+    let acct = client.verify_account_credentials().await?;
+    let options = GetAccountStatusesInputOptions {
         only_media: None,
         limit: Some(count),
         max_id: None,
         since_id: None,
-        min_id: None,
-        local: None,
+        pinned: None,
+        exclude_replies: None,
+        exclude_reblogs: None,
     };
-    let res = client.get_home_timeline(Some(&options)).await?.json();
+    let res = client
+        .get_account_statuses(acct.json.id, Some(&options))
+        .await?
+        .json();
 
     Ok((res.iter().map(parsed_toot).collect(), res))
+}
+
+pub async fn replies(
+    client: &(dyn Megalodon + Send + Sync),
+    posts: impl Iterator<Item = &Status>,
+    max_replies_each: usize,
+) -> Result<Vec<(Vec<(String, String)>, Vec<Status>)>, megalodon::error::Error> {
+    info!("Getting replies");
+    let mut statuses = Vec::new();
+    let options = GetStatusContextInputOptions {
+        limit: Some(max_replies_each as u32),
+        ..Default::default()
+    };
+    for post in posts {
+        let replies = client
+            .get_status_context(post.id.clone(), Some(&options))
+            .await?
+            .json()
+            .descendants
+            .into_iter()
+            .take(max_replies_each)
+            .collect::<Vec<_>>();
+        statuses.push((replies.iter().map(parsed_toot).collect(), replies));
+    }
+
+    Ok(statuses)
 }
 
 fn parsed_toot(status: &megalodon::entities::Status) -> (String, String) {
