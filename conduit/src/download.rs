@@ -1,7 +1,10 @@
 use html2text::render::text_renderer::{TaggedLine, TextDecorator};
+use log::info;
 use megalodon::{
     entities::{Attachment, Status},
-    megalodon::{GetAccountStatusesInputOptions, GetTimelineOptionsWithLocal},
+    megalodon::{
+        GetAccountStatusesInputOptions, GetStatusContextInputOptions, GetTimelineOptionsWithLocal,
+    },
     Megalodon,
 };
 
@@ -34,13 +37,14 @@ pub async fn feed(
             min_id: None,
             local: None,
         };
-        let tmp = client.get_home_timeline(Some(&options)).await?.json();
-        if tmp .len() == 0 {
-            break
+        let mut tmp = client.get_home_timeline(Some(&options)).await?.json();
+        if tmp.len() == 0 {
+            break;
         }
+        // dont show replies in main feed
+        tmp.retain(|p| p.in_reply_to_account_id.is_none());
         res.extend(tmp);
     }
-    
 
     Ok((res.iter().map(parsed_toot).collect(), res))
 }
@@ -67,13 +71,30 @@ pub async fn self_posts(
     Ok((res.iter().map(parsed_toot).collect(), res))
 }
 
-#[allow(unused)]
 pub async fn replies(
     client: &(dyn Megalodon + Send + Sync),
     posts: impl Iterator<Item = &Status>,
     max_replies_each: usize,
-) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
-    Ok((Vec::new(), Vec::new()))
+) -> Result<Vec<(Vec<(String, String)>, Vec<Status>)>, megalodon::error::Error> {
+    info!("Getting replies");
+    let mut statuses = Vec::new();
+    let options = GetStatusContextInputOptions {
+        limit: Some(max_replies_each as u32),
+        ..Default::default()
+    };
+    for post in posts {
+        let replies = client
+            .get_status_context(post.id.clone(), Some(&options))
+            .await?
+            .json()
+            .descendants
+            .into_iter()
+            .take(max_replies_each)
+            .collect::<Vec<_>>();
+        statuses.push((replies.iter().map(parsed_toot).collect(), replies));
+    }
+
+    Ok(statuses)
 }
 
 fn parsed_toot(status: &megalodon::entities::Status) -> (String, String) {

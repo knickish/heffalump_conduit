@@ -18,6 +18,7 @@ mod upload;
 
 use download::{feed, get_client, replies, self_posts};
 use heffalump_hh_types::{HeffalumpPrefs, OnDevice, TootAuthor, TootContent};
+use tokio::try_join;
 use upload::*;
 
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
@@ -40,6 +41,19 @@ pub unsafe extern "cdecl" fn OpenConduit(
     _: *const c_void,
     sync_props: *const CSyncProperties,
 ) -> c_long {
+    match std::panic::catch_unwind(|| conduit(sync_props)) {
+        Ok(res) => res,
+        Err(_) => {
+            error!(
+                "Caught Panic: {}",
+                std::backtrace::Backtrace::force_capture()
+            );
+            -1
+        }
+    }
+}
+
+unsafe fn conduit(sync_props: *const CSyncProperties) -> c_long {
     let Some(path) = (unsafe { path_from_sync_props(sync_props) }) else {
         return -1;
     };
@@ -157,7 +171,7 @@ unsafe fn path_from_sync_props(props: *const CSyncProperties) -> Option<PathBuf>
     }
 }
 
-fn to_latin_1(arg: impl AsRef<str>, add_null: bool) -> Vec<u8> {
+fn to_latin_1(arg: impl AsRef<str>, cutoff: Option<usize>, add_null: bool) -> Vec<u8> {
     use encoding::{
         all::ISO_8859_1,
         {EncoderTrap, Encoding},
@@ -166,6 +180,10 @@ fn to_latin_1(arg: impl AsRef<str>, add_null: bool) -> Vec<u8> {
     let mut ret = ISO_8859_1
         .encode(arg.as_ref(), EncoderTrap::Ignore)
         .expect("Ignoring non-encodable chars, this shouldn't be reachable");
+
+    if let Some(cutoff) = cutoff {
+        ret.truncate(cutoff);
+    }
 
     if add_null {
         ret.push(0);
@@ -209,46 +227,79 @@ async fn create_dbs(
         PalmDatabase::<PdbDatabase>::from_bytes(CONTENT_DB).map_err(|e| error!("{}", e))?;
     let mut prefs = HeffalumpPrefs::default();
 
-    let (feed_contents, mut feed_raw) = feed(client, 250).await.map_err(|e| error!("{}", e))?;
-    let (self_contents, self_raw) = self_posts(client, 40).await.map_err(|e| error!("{}", e))?;
-    let (reply_contents, reply_raw) = replies(client, feed_raw.iter().chain(self_raw.iter()), 10)
+    let ((feed_contents, mut feed_raw), (self_contents, self_raw)) =
+        try_join!(feed(client, 100), self_posts(client, 40)).map_err(|e| error!("{}", e))?;
+    let replies = replies(client, feed_raw.iter().chain(self_raw.iter()), 10)
         .await
         .map_err(|e| error!("{}", e))?;
 
     prefs.home_timeline_len = feed_contents.len() as u16;
     prefs.self_timeline_len = self_contents.len() as u16;
-    prefs.reply_content_len = reply_contents.len() as u16;
+    prefs.reply_content_len = replies.len() as u16;
 
     feed_raw.extend(self_raw);
-    feed_raw.extend(reply_raw);
 
     let authors = self_contents
         .iter()
         .chain(&feed_contents)
-        .chain(&reply_contents)
-        .map(|(author, _)| (author.to_string(), to_latin_1(author, true)))
+        .chain(replies.iter().flat_map(|t| &t.0))
+        .map(|(author, _)| (author.to_string(), to_latin_1(author, Some(39), true)))
         .collect::<BTreeMap<_, _>>();
 
-    for (author, content) in feed_contents
+    let mut start = feed_contents.len() + self_contents.len();
+    for ((author, content), replies) in feed_contents
         .into_iter()
         .chain(self_contents)
-        .chain(reply_contents)  {
+        .zip(replies.iter().map(|t| t.0.len()))
+    {
         let (idx, _) = authors
             .iter()
             .enumerate()
             .find(|(_idx, (k, _v))| k == &&author)
             .to_owned()
             .unwrap();
-        let content = TootContent {
-            author: idx as u16,
-            is_reply_to: 0,
-            replies_start: 0,
-            contents: to_latin_1(content, false),
-        }
-        .to_hh_bytes()
-        .map_err(|e| error!("{}", e))?;
+        let content = match replies == 0 {
+            true => TootContent {
+                author: idx as u16,
+                is_reply_to: 0,
+                replies_start: 0,
+                contents: to_latin_1(content, None, false),
+            },
+            false => {
+                let ret = TootContent {
+                    author: idx as u16,
+                    is_reply_to: 0,
+                    replies_start: start as u16,
+                    contents: to_latin_1(content, None, false),
+                };
+                start += replies;
+                ret
+            }
+        };
+        let content = content.to_hh_bytes().map_err(|e| error!("{}", e))?;
         base_content.insert_record(RecordAttributes::default(), &content);
     }
+
+    for (index, contents) in replies.iter().map(|t| &t.0).enumerate() {
+        for (author, content) in contents.iter() {
+            let (author_idx, _) = authors
+                .iter()
+                .enumerate()
+                .find(|(_idx, (k, _v))| k == &author)
+                .to_owned()
+                .unwrap();
+            let content = TootContent {
+                author: author_idx as u16,
+                is_reply_to: index as u16,
+                replies_start: 0,
+                contents: to_latin_1(content, None, false),
+            };
+            let content = content.to_hh_bytes().map_err(|e| error!("{}", e))?;
+            base_content.insert_record(RecordAttributes::default(), &content);
+        }
+    }
+
+    feed_raw.extend(replies.into_iter().flat_map(|t| t.1));
 
     for author_name in authors.into_values() {
         let author = TootAuthor { author_name }
