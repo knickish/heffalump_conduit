@@ -1,5 +1,5 @@
 use html2text::render::text_renderer::{TaggedLine, TextDecorator};
-use log::info;
+use log::{error, info, warn};
 use megalodon::{
     entities::{Attachment, Status},
     megalodon::{
@@ -7,6 +7,7 @@ use megalodon::{
     },
     Megalodon,
 };
+use std::time::Duration;
 
 use crate::MASTODON_APP_NAME;
 
@@ -37,7 +38,22 @@ pub async fn feed(
             min_id: None,
             local: None,
         };
-        let mut tmp = client.get_home_timeline(Some(&options)).await?.json();
+        let server_response = client.get_home_timeline(Some(&options)).await;
+        let mut tmp = match server_response {
+            Ok(ok) => ok.json(),
+            Err(megalodon::error::Error::RequestError(r))
+                if r.status() == Some(http::StatusCode::TOO_MANY_REQUESTS) =>
+            {
+                warn!("recieved 429, sleeping");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Err(err) => {
+                return Err(err)
+                    .inspect_err(|e| error!("Error while downloading timeline posts: {}", e))
+            }
+        };
+
         if tmp.len() == 0 {
             break;
         }
@@ -54,19 +70,38 @@ pub async fn self_posts(
     count: u32,
 ) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
     let acct = client.verify_account_credentials().await?;
-    let options = GetAccountStatusesInputOptions {
-        only_media: None,
-        limit: Some(count),
-        max_id: None,
-        since_id: None,
-        pinned: None,
-        exclude_replies: None,
-        exclude_reblogs: None,
-    };
-    let res = client
-        .get_account_statuses(acct.json.id, Some(&options))
-        .await?
-        .json();
+    let mut res = Vec::new();
+    while res.len() != count as usize {
+        let options = GetAccountStatusesInputOptions {
+            only_media: None,
+            limit: Some(count - res.len() as u32),
+            max_id: None,
+            since_id: None,
+            pinned: None,
+            exclude_replies: None,
+            exclude_reblogs: None,
+        };
+        let tmp = client
+            .get_account_statuses(acct.json.id.clone(), Some(&options))
+            .await;
+
+        let tmp = match tmp {
+            Ok(ok) => ok.json(),
+            Err(megalodon::error::Error::RequestError(r))
+                if r.status() == Some(http::StatusCode::TOO_MANY_REQUESTS) =>
+            {
+                warn!("recieved 429, sleeping");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Err(err) => {
+                return Err(err)
+                    .inspect_err(|e| error!("Error while downloading self posts: {}", e))
+            }
+        };
+
+        res.extend(tmp);
+    }
 
     Ok((res.iter().map(parsed_toot).collect(), res))
 }
@@ -83,10 +118,27 @@ pub async fn replies(
         ..Default::default()
     };
     for post in posts {
-        let replies = client
-            .get_status_context(post.id.clone(), Some(&options))
-            .await?
-            .json()
+        let rep = loop {
+            match client
+                .get_status_context(post.id.clone(), Some(&options))
+                .await
+            {
+                Ok(ok) => break ok.json(),
+                Err(megalodon::error::Error::RequestError(r))
+                    if r.status() == Some(http::StatusCode::TOO_MANY_REQUESTS) =>
+                {
+                    warn!("recieved 429, sleeping");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                Err(err) => {
+                    return Err(err)
+                        .inspect_err(|e| error!("Error while downloading replies: {}", e))
+                }
+            }
+        };
+
+        let replies = rep
             .descendants
             .into_iter()
             .take(max_replies_each)
