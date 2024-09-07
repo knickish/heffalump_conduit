@@ -22,7 +22,7 @@ use tokio::try_join;
 use upload::*;
 
 const CREATOR: [c_uchar; 4] = [b'H', b'E', b'F', b'f'];
-const MASTODON_APP_NAME: &str = "Heffalump 0.2 (PalmOS)";
+const MASTODON_APP_NAME: &str = "Heffalump 0.3 (PalmOS)";
 const AUTHOR_DB: &[u8] = include_bytes!("../include/HeffalumpAuthorDB.pdb");
 const CONTENT_DB: &[u8] = include_bytes!("../include/HeffalumpContentDB.pdb");
 const MASTODON_CACHE_OLD: &str = "heffalump_mastodon_timeline_old.json";
