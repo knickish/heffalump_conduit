@@ -29,6 +29,7 @@ pub async fn feed(
     count: u32,
 ) -> Result<(Vec<(String, String)>, Vec<Status>), megalodon::error::Error> {
     let mut res = Vec::new();
+    let mut prev_limit: u32 = 0;
     while res.len() != count as usize {
         let options: GetTimelineOptionsWithLocal = GetTimelineOptionsWithLocal {
             only_media: None,
@@ -38,13 +39,28 @@ pub async fn feed(
             min_id: None,
             local: None,
         };
+
+        info!(
+            "prev_limit = {} options.limit = {} res.len() = {}",
+            prev_limit,
+            options.limit.unwrap(),
+            res.len()
+        );
+
+        // If prev_limit == options.limit it means that the server is not
+        // capable of satisfying our request (requests limit reached or
+        // not enough posts to download), hence we break.
+        if options.limit.unwrap() == prev_limit {
+            break;
+        }
+
         let server_response = client.get_home_timeline(Some(&options)).await;
         let mut tmp = match server_response {
             Ok(ok) => ok.json(),
             Err(megalodon::error::Error::RequestError(r))
                 if r.status() == Some(http::StatusCode::TOO_MANY_REQUESTS) =>
             {
-                warn!("recieved 429, sleeping");
+                warn!("received 429, sleeping");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -53,6 +69,8 @@ pub async fn feed(
                     .inspect_err(|e| error!("Error while downloading timeline posts: {}", e))
             }
         };
+
+        prev_limit = options.limit.unwrap();
 
         if tmp.len() == 0 {
             break;
