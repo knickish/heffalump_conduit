@@ -1,6 +1,6 @@
 [package]
 name = "heffalump_conduit_installer"
-version = "0.2.2"
+version = "0.3.4"
 edition = "2021"
 resolver = "2"
 
