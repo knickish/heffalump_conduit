@@ -14,7 +14,7 @@ use crate::MASTODON_APP_NAME;
 pub fn get_client(
     mastodon_instance: String,
     access_token: String,
-) -> Box<dyn Megalodon + Send + Sync> {
+) -> Result<Box<dyn Megalodon + Send + Sync>, megalodon::error::Error> {
     let full_instance_url = format!("https://{}/", mastodon_instance);
     megalodon::generator(
         megalodon::SNS::Mastodon,
@@ -98,6 +98,7 @@ pub async fn self_posts(
             pinned: None,
             exclude_replies: None,
             exclude_reblogs: None,
+            only_public: None,
         };
         let tmp = client
             .get_account_statuses(acct.json.id.clone(), Some(&options))
@@ -192,21 +193,16 @@ fn parsed_toot(status: &megalodon::entities::Status) -> (String, String) {
     }
 
     for media in attachments {
-        content.push_str(
-            format!(
-                "\n[img] (Alt Text: {})",
-                media
-                    .description
-                    .clone()
-                    .unwrap_or_else(|| String::from("No Alt Text"))
-            )
-            .as_str(),
-        )
+        let to_push = match media.description.clone() {
+            Some(alt_text) => format!("\n[img] (Alt Text: {alt_text})"),
+            None => format!("\n[img] (No Alt Text)"),
+        };
+        content.push_str(to_push.as_str())
     }
 
     if let Some(card) = &status.card {
         match card.description.len() {
-            0 => content.push_str("\n[media] (Alt Text: No Alt Text)"),
+            0 => content.push_str("\n[media] (No Alt Text)"),
             _ => content.push_str(format!("\n[media] (Alt Text: {})", &card.description).as_str()),
         }
     }
@@ -300,7 +296,7 @@ mod test {
     async fn test_feed() {
         let token = env!("HEFFALUMP_ACCESS_TOKEN").to_string();
         let instance = env!("HEFFALUMP_MASTADON_INST").to_string();
-        let client = get_client(instance, token);
+        let client = get_client(instance, token).unwrap();
         for (author, content) in feed(client.as_ref(), 100).await.unwrap().0 {
             println!("{}\n{}", author, content);
         }
