@@ -20,7 +20,8 @@ pub async fn configure(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         full_instance_url.clone(),
         None,
         Some(String::from(MASTODON_APP_NAME)),
-    );
+    )
+    .map_err(Box::new)?;
 
     let options = AppInputOptions {
         ..Default::default()
@@ -61,7 +62,8 @@ pub async fn configure(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         full_instance_url,
         Some(token_data.access_token.clone()),
         Some(String::from(MASTODON_APP_NAME)),
-    );
+    )
+    .map_err(Box::new)?;
 
     debug!("generated authenticated client");
 

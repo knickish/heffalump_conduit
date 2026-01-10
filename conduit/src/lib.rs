@@ -90,7 +90,11 @@ unsafe fn conduit(sync_props: *const CSyncProperties) -> c_long {
         return -1;
     };
 
-    let client = get_client(mastodon_inst, mastodon_access);
+    let Ok(client) = get_client(mastodon_inst, mastodon_access)
+        .inspect_err(|err| error!("Failed to get client with error: {err}"))
+    else {
+        return -1;
+    };
     let Ok((author_db, content_db, prefs)) =
         runtime.block_on(create_dbs(client.as_ref(), Some(&path)))
     else {
